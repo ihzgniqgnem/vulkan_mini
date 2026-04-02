@@ -6,19 +6,22 @@
 #include "min_type.h"
 
 namespace vkm::utils {
-	template<typename T, typename U>
+	template<typename T, typename U = std::underlying_type_t<T>>
 		requires is_enum_class_v<T>&& requires{T::ArrayMax;} && ((size_t)T::ArrayMax > 0)
 	class NamedArray;
 }
 
-namespace vkm_impl::utils::BitFlags {
+namespace vkm_impl::utils::NamedArray {
 	using namespace vkm::utils;
-	template<size_t l,typename U>
+	
+	template<size_t l, typename U>
 	class ConstProxyArray {
 		U data[l];
-		template<typename T>
-			requires is_enum_class_v<T>&& requires{T::FlagMax;} && ((size_t)T::FlagMax > 0)
+		template<typename T, typename V>
+			requires is_enum_class_v<T>&& requires{T::ArrayMax;} && ((size_t)T::ArrayMax > 0)
 		friend class NamedArray;
+		template<size_t, typename>
+		friend class ProxyArray;
 	public:
 		template<size_t index>
 		constexpr const U& get() const noexcept {
@@ -30,19 +33,22 @@ namespace vkm_impl::utils::BitFlags {
 		constexpr size_t size() const noexcept {
 			return l;
 		}
-		constexpr bool operator==(const ConstProxyArray<l, U>& other) const noexcept(std::declval<U>() != std::declval<U>()) {
+		constexpr bool operator==(const ConstProxyArray<l, U>& other) const noexcept {
 			for (size_t i = 0;i < l;i++) {
 				if (data[i] != other.data[i])return false;
 			}
 			return true;
 		}
 	};
-	template<size_t l,typename U>
+	
+	template<size_t l, typename U>
 	class ProxyArray {
 		U* data[l];
-		template<typename T>
-			requires is_enum_class_v<T>&& requires{T::FlagMax;} && ((size_t)T::FlagMax > 0)
+		template<typename T, typename V>
+			requires is_enum_class_v<T>&& requires{T::ArrayMax;} && ((size_t)T::ArrayMax > 0)
 		friend class NamedArray;
+		template<size_t, typename>
+		friend class ConstProxyArray;
 	public:
 		template<size_t index>
 		constexpr U& get() noexcept {
@@ -74,9 +80,8 @@ namespace vkm_impl::utils::BitFlags {
 			return *this;
 		}
 		constexpr auto& operator=(const ProxyArray<l,U>& other) noexcept(std::is_nothrow_copy_constructible_v<U>) {
-			auto temp_other = (ConstProxyArray<l,U>)other;
 			for (size_t i = 0;i < l;i++) {
-				*data[i] = temp_other[i];
+				*data[i] = *other.data[i];
 			}
 			return *this;
 		}
@@ -87,13 +92,13 @@ namespace vkm_impl::utils::BitFlags {
 			}
 			return res;
 		}
-		constexpr bool operator==(const ProxyArray& other) const noexcept(std::declval<U>() != std::declval<U>()) {
+		constexpr bool operator==(const ProxyArray& other) const noexcept {
 			for (size_t i = 0;i < l;i++) {
 				if (*data[i] != *other.data[i])return false;
 			}
 			return true;
 		}
-		constexpr bool operator==(const ConstProxyArray<l,U>& other) const noexcept(std::declval<U>()!=std::declval<U>()) {
+		constexpr bool operator==(const ConstProxyArray<l,U>& other) const noexcept {
 			for (size_t i = 0;i < l;i++) {
 				if (*data[i] != other.data[i])return false;
 			}
@@ -101,59 +106,73 @@ namespace vkm_impl::utils::BitFlags {
 		}
 	};
 }
+
 namespace vkm::utils {
-	template<typename T,typename U>
+	template<typename T, typename U>
 		requires is_enum_class_v<T>&& requires{T::ArrayMax;} && ((size_t)T::ArrayMax > 0)
 	class NamedArray {
-		using P = UnsignedMinType<T::ArrayMax>;
+		using P = UnsignedMinType<(size_t)T::ArrayMax>;
 		static constexpr size_t data_length = (size_t)T::ArrayMax;
-		U data[data_length];
-		friend struct std::hash<NamedArray<T,U>>;
+		U data[data_length]{};
+		template<size_t l, typename V>
+		friend class vkm_impl::utils::NamedArray::ProxyArray;
+		template<size_t l, typename V>
+		friend class vkm_impl::utils::NamedArray::ConstProxyArray;
+		template<typename>
+		friend struct std::hash;
 	public:
 		constexpr NamedArray<T,U>() noexcept = default;
 		constexpr NamedArray<T, U>(const NamedArray<T, U>&) = default;
 		constexpr NamedArray<T, U>(NamedArray<T, U>&&) = default;
 		constexpr NamedArray<T, U>& operator=(const NamedArray<T, U>&) = default;
 		constexpr NamedArray<T, U>& operator=(NamedArray<T, U>&&) = default;
-		constexpr U operator[](const T enum_index) noexcept {
+		
+		constexpr U& operator[](const T enum_index) noexcept {
 			return data[static_cast<P>(enum_index)];
 		}
-		constexpr const U operator[](const T enum_index) const noexcept {
+		constexpr const U& operator[](const T enum_index) const noexcept {
 			return data[static_cast<P>(enum_index)];
 		}
+		
 		template<size_t l>
 		constexpr auto operator[](const T(&enum_indexes)[l]) noexcept {
-			vkm_impl::utils::NamedArray::ProxyArray<l> res;
-			U index;
+			vkm_impl::utils::NamedArray::ProxyArray<l, U> res;
 			for (size_t i = 0;i < l;i++) {
-				index = static_cast<U>(enum_indexes[i]);
-				res.data[i] = vkm_impl::utils::NamedArray::Proxy(data[index >> 3], index & 7);
+				res.data[i] = &data[static_cast<P>(enum_indexes[i])];
 			}
 			return res;
 		}
+		
 		template<size_t l>
 		constexpr auto operator[](const T(&enum_indexes)[l]) const noexcept {
-			vkm_impl::utils::NamedArray::BoolArray<l> res;
-			U index;
+			vkm_impl::utils::NamedArray::ConstProxyArray<l, U> res{};
 			for (size_t i = 0;i < l;i++) {
-				index = static_cast<U>(enum_indexes[i]);
-				res.data[i] = (data[index >> 3] >> (index & 7)) & 1u;
+				res.data[i] = data[static_cast<P>(enum_indexes[i])];
 			}
 			return res;
 		}
-		constexpr bool operator==(NamedArray<T> other) const noexcept {
-			return !std::memcmp(data, other.data, item_num);
+		
+		constexpr bool operator==(const NamedArray<T, U>& other) const noexcept {
+			for (size_t i = 0; i < data_length; i++) {
+				if (data[i] != other.data[i]) return false;
+			}
+			return true;
+		}
+		
+		constexpr size_t size() const noexcept {
+			return data_length;
 		}
 	};
 }
+
 namespace std {
-	template<typename T,typename U>
-	struct hash<vkm::utils::NamedArray<T,U>> {
+	template<typename T, typename U>
+	struct hash<vkm::utils::NamedArray<T, U>> {
 	private:
 		static constexpr auto string_view_hash = std::hash<std::string_view>{};
 	public:
-		size_t operator()(const vkm::utils::NamedArray<T>& flags) const noexcept {
-			std::string_view view{ reinterpret_cast<const char*>(flags.data), vkm::utils::NamedArray<T>::item_num };
+		size_t operator()(const vkm::utils::NamedArray<T, U>& arr) const noexcept {
+			std::string_view view{ reinterpret_cast<const char*>(arr.data), sizeof(U) * vkm::utils::NamedArray<T, U>::data_length };
 			return string_view_hash(view);
 		}
 	};
